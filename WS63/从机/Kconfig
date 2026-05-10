@@ -1,0 +1,6 @@
+# application/JS/Kconfig
+config ENABLE_JS_APP
+    bool "Enable JS Application"
+    default y
+    help
+      This is the pure custom JS application for WS63.
