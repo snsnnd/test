@@ -1,6 +1,6 @@
 /**
- * 这是您将会传给后端工程师的标注核心接口模型文件
- * 所有的 UI 控制都与此解耦绑定
+ * 前后端统一数据模型。
+ * UI 只依赖这些结构，真实数据由 HTTP 后端或 Mock 服务注入。
  */
 
 export interface DeviceOverview {
@@ -35,13 +35,21 @@ export interface DeviceTelemetry {
    predictedClass?: number;
    classProbabilities?: number[];
    inferenceLatencyMs?: number;
-    classLabel?: string;
-    alertLevel?: string;
-    alertLabel?: string;
-    remainingLifeDays?: number;
-    maintenanceDueText?: string;
-    diagnosisSummary?: string;
-    maintenanceAdvice?: string;
+   classLabel?: string;
+   alertLevel?: string;
+   alertLabel?: string;
+   remainingLifeDays?: number;
+   maintenanceDueText?: string;
+   diagnosisSummary?: string;
+   maintenanceAdvice?: string;
+   currentPreprocessMs?: number;
+   currentInferenceMs?: number;
+   currentTotalMs?: number;
+   currentFps?: number;
+   averagePreprocessMs?: number;
+   averageInferenceMs?: number;
+   averageTotalMs?: number;
+   averageFps?: number;
 }
 
 export interface ClusterStatus {
@@ -51,4 +59,12 @@ export interface ClusterStatus {
    scanPosition: number;
    connectedSources?: number;
    activeAlerts?: number;
+   currentPreprocessMs?: number;
+   currentInferenceMs?: number;
+   currentTotalMs?: number;
+   currentFps?: number;
+   averagePreprocessMs?: number;
+   averageInferenceMs?: number;
+   averageTotalMs?: number;
+   averageFps?: number;
 }
