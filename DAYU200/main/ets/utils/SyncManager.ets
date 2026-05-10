@@ -3,7 +3,7 @@ import { DeviceOverview } from '../api/models/DeviceModels';
 
 export class SyncManager {
    private static timer: number = -1;
-   
+
    static start() {
       // 提供防止初始白屏的占位符缓存
       AppStorage.setOrCreate('activeDeviceId', 0);
@@ -17,6 +17,15 @@ export class SyncManager {
       AppStorage.setOrCreate('maintenanceAdvice', '等待设备接入');
       AppStorage.setOrCreate('connectedSources', 0);
       AppStorage.setOrCreate('activeAlerts', 0);
+      AppStorage.setOrCreate('classProbabilities', [0, 0, 0] as number[]);
+      AppStorage.setOrCreate('currentPreprocessMs', 0);
+      AppStorage.setOrCreate('currentInferenceMs', 0);
+      AppStorage.setOrCreate('currentTotalMs', 0);
+      AppStorage.setOrCreate('currentFps', 0);
+      AppStorage.setOrCreate('averagePreprocessMs', 0);
+      AppStorage.setOrCreate('averageInferenceMs', 0);
+      AppStorage.setOrCreate('averageTotalMs', 0);
+      AppStorage.setOrCreate('averageFps', 0);
 
       // 设备列表（供选择器使用，只需拉取一次基础信息）
       AppStorage.setOrCreate('deviceList', [] as DeviceOverview[]);
@@ -30,7 +39,7 @@ export class SyncManager {
 
             // 始终拉取设备列表（供选择器刷新用）
             let fleet = await deviceService.fetchFleetOverview();
-             AppStorage.setOrCreate('deviceList', fleet);
+            AppStorage.setOrCreate('deviceList', fleet);
 
             // 只有在用户已选择设备后，才拉取详细遥测数据
             if (isSelected) {
@@ -57,22 +66,34 @@ export class SyncManager {
                   AppStorage.setOrCreate('motorRpm', matchedDevice.motorRpm);
                   AppStorage.setOrCreate('motorTemp', matchedDevice.motorTemp);
                   AppStorage.setOrCreate('activeDeviceName', matchedDevice.name);
-                  AppStorage.setOrCreate('classLabel', matchedDevice.classLabel ?? '待判定');
-                  AppStorage.setOrCreate('alertLabel', matchedDevice.alertLabel ?? '绿区监测');
-                  AppStorage.setOrCreate('remainingLifeDays', matchedDevice.remainingLifeDays ?? 0);
-                  AppStorage.setOrCreate('maintenanceDueText', matchedDevice.maintenanceDueText ?? '--');
-                  AppStorage.setOrCreate('diagnosisSummary', matchedDevice.diagnosisSummary ?? telemetry.systemStatus);
-                }
-                // 3. 同步选中设备的密集阵列数据
-                AppStorage.setOrCreate('healthHistory', telemetry.healthHistory);
-                AppStorage.setOrCreate('tempHistory', telemetry.tempHistory);
-                AppStorage.setOrCreate('envHumidity', telemetry.envHumidity);
-                AppStorage.setOrCreate('audioSpectrum', telemetry.audioSpectrum);
-                AppStorage.setOrCreate('accDataX', telemetry.accX);
-                AppStorage.setOrCreate('accDataY', telemetry.accY);
-                AppStorage.setOrCreate('accDataZ', telemetry.accZ);
-                AppStorage.setOrCreate('maintenanceAdvice', telemetry.maintenanceAdvice ?? '等待模型输出');
-             }
+                  AppStorage.setOrCreate('classLabel', matchedDevice.classLabel ?? telemetry.classLabel ?? '待判定');
+                  AppStorage.setOrCreate('alertLabel', matchedDevice.alertLabel ?? telemetry.alertLabel ?? '绿区监测');
+                  AppStorage.setOrCreate('remainingLifeDays', matchedDevice.remainingLifeDays ?? telemetry.remainingLifeDays ?? 0);
+                  AppStorage.setOrCreate('maintenanceDueText', matchedDevice.maintenanceDueText ?? telemetry.maintenanceDueText ?? '--');
+                  AppStorage.setOrCreate('diagnosisSummary', matchedDevice.diagnosisSummary ?? telemetry.diagnosisSummary ?? telemetry.systemStatus);
+               }
+
+               // 3. 同步选中设备的密集阵列数据
+               AppStorage.setOrCreate('healthHistory', telemetry.healthHistory);
+               AppStorage.setOrCreate('tempHistory', telemetry.tempHistory);
+               AppStorage.setOrCreate('envHumidity', telemetry.envHumidity);
+               AppStorage.setOrCreate('audioSpectrum', telemetry.audioSpectrum);
+               AppStorage.setOrCreate('accDataX', telemetry.accX);
+               AppStorage.setOrCreate('accDataY', telemetry.accY);
+               AppStorage.setOrCreate('accDataZ', telemetry.accZ);
+               AppStorage.setOrCreate('maintenanceAdvice', telemetry.maintenanceAdvice ?? '等待模型输出');
+               AppStorage.setOrCreate('classProbabilities', telemetry.classProbabilities ?? [0, 0, 0]);
+
+               // 4. 同步 Atlas/后端推理性能，供概览页与管家页动态展示
+               AppStorage.setOrCreate('currentPreprocessMs', telemetry.currentPreprocessMs ?? cluster.currentPreprocessMs ?? 0);
+               AppStorage.setOrCreate('currentInferenceMs', telemetry.currentInferenceMs ?? cluster.currentInferenceMs ?? 0);
+               AppStorage.setOrCreate('currentTotalMs', telemetry.currentTotalMs ?? cluster.currentTotalMs ?? 0);
+               AppStorage.setOrCreate('currentFps', telemetry.currentFps ?? cluster.currentFps ?? 0);
+               AppStorage.setOrCreate('averagePreprocessMs', telemetry.averagePreprocessMs ?? cluster.averagePreprocessMs ?? 0);
+               AppStorage.setOrCreate('averageInferenceMs', telemetry.averageInferenceMs ?? cluster.averageInferenceMs ?? 0);
+               AppStorage.setOrCreate('averageTotalMs', telemetry.averageTotalMs ?? cluster.averageTotalMs ?? 0);
+               AppStorage.setOrCreate('averageFps', telemetry.averageFps ?? cluster.averageFps ?? 0);
+            }
          } catch(e) {
             console.error("HTTP 远端拉取失败：" + e);
          }
