@@ -52,7 +52,6 @@ export class SyncManager {
                // 1. 同步环境网关宏观池
                AppStorage.setOrCreate('logs', cluster.logs);
                AppStorage.setOrCreate('nearlinkLatency', cluster.nearlinkLatency);
-               AppStorage.setOrCreate('edgeTemp', cluster.edgeTemp);
                AppStorage.setOrCreate('scanPosition', cluster.scanPosition);
                AppStorage.setOrCreate('connectedSources', cluster.connectedSources ?? 0);
                AppStorage.setOrCreate('activeAlerts', cluster.activeAlerts ?? 0);
