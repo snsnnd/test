@@ -10,99 +10,167 @@ export struct DeviceManagerView {
   @StorageLink('classLabel') classLabel: string = '待判定';
   @StorageLink('alertLabel') alertLabel: string = '绿区监测';
   @StorageLink('statusColor') statusColor: string = '#34C759';
+  @StorageLink('currentInferenceMs') currentInferenceMs: number = 0;
+  @StorageLink('averageFps') averageFps: number = 0;
+  @StorageLink('activeAlerts') activeAlerts: number = 0;
   @State isChecking: boolean = false;
-  @State checkResult: string = "";
-  
+  @State checkResult: string = '';
+
   build() {
     Scroll() {
-      Column({space: 16}) {
-        // AI 体检卡片
+      Column({ space: 16 }) {
         Column() {
-           Text("智能全模态体检").fontSize(18).fontWeight(FontWeight.Bold).fontColor('#1C1C1E').margin({bottom: 10})
-           Text("由昇腾处理器提供算力，深度侦测内部件不可见磨损及性能状态。").fontSize(14).fontColor('#8E8E93').margin({bottom: 24}).lineHeight(20)
-           
-           Button(this.isChecking ? "底盘诊断与特征映射中..." : "一键体检")
-             .width('100%')
-             .height(55)
-             .backgroundColor(this.isChecking ? '#E5E5EA' : '#007AFF')
-             .fontColor(this.isChecking ? '#8E8E93' : '#FFFFFF')
-             .fontWeight(FontWeight.Bold)
-             .borderRadius(16)
-             .onClick(() => {
-                if(this.isChecking) return;
-                this.isChecking = true;
-                this.checkResult = "";
-                setTimeout(() => {
-                   this.isChecking = false;
-                    this.checkResult = this.diagnosisSummary;
-                 }, 2000);
-              })
+          Text('模型诊断快照')
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontColor('#1C1C1E')
+            .margin({ bottom: 10 })
+          Text('展示后端模型当前诊断摘要、告警标签与推理状态；本页不直接执行停机或物理控制。')
+            .fontSize(14)
+            .fontColor('#8E8E93')
+            .margin({ bottom: 24 })
+            .lineHeight(20)
 
-            if (this.checkResult !== "") {
-               Text(this.checkResult).fontSize(13).fontColor(this.statusColor).fontWeight(FontWeight.Bold).margin({top: 16})
-            }
+          Button(this.isChecking ? '正在读取后端诊断快照...' : '刷新诊断快照')
+            .width('100%')
+            .height(55)
+            .backgroundColor(this.isChecking ? '#E5E5EA' : '#007AFF')
+            .fontColor(this.isChecking ? '#8E8E93' : '#FFFFFF')
+            .fontWeight(FontWeight.Bold)
+            .borderRadius(16)
+            .onClick(() => {
+              if (this.isChecking) {
+                return;
+              }
+              this.isChecking = true;
+              this.checkResult = '';
+              setTimeout(() => {
+                this.isChecking = false;
+                this.checkResult = this.diagnosisSummary;
+                deviceService.submitLogAction(`诊断快照刷新：${this.classLabel} / ${this.alertLabel} / 健康度=${this.healthScore}`);
+              }, 600);
+            })
 
-            Text(`当前模型标签：${this.classLabel} / ${this.alertLabel}`).fontSize(13).fontColor('#8E8E93').margin({top: 12})
+          if (this.checkResult !== '') {
+            Text(this.checkResult)
+              .fontSize(13)
+              .fontColor(this.statusColor)
+              .fontWeight(FontWeight.Bold)
+              .margin({ top: 16 })
+          }
 
-         }.width('100%').padding(24).backgroundColor('#FFFFFF').borderRadius(24).alignItems(HorizontalAlign.Start)
-          .shadow({ radius: 15, color: 'rgba(0,0,0,0.03)', offsetY: 6 })
+          Text(`当前模型标签：${this.classLabel} / ${this.alertLabel}`)
+            .fontSize(13)
+            .fontColor('#8E8E93')
+            .margin({ top: 12 })
+        }
+        .width('100%')
+        .padding(24)
+        .backgroundColor('#FFFFFF')
+        .borderRadius(24)
+        .alignItems(HorizontalAlign.Start)
+        .shadow({ radius: 15, color: 'rgba(0,0,0,0.03)', offsetY: 6 })
 
-        // 寿命预测卡片
         Column() {
-           Text("可用周期预判").fontSize(18).fontWeight(FontWeight.Bold).fontColor('#1C1C1E').margin({bottom: 24})
-           
-            Row() {
-               Column() {
-                  Text("核心组件剩余期限").fontSize(13).fontColor('#8E8E93').margin({bottom:8})
-                  Text(this.remainingLifeDays > 0 ? `${this.remainingLifeDays} 天` : "评估中").fontSize(26).fontColor('#1C1C1E').fontWeight(FontWeight.Bold)
-               }.alignItems(HorizontalAlign.Start).layoutWeight(1)
-               
-               Column() {
-                  Text("建议阻断保养节点").fontSize(13).fontColor('#8E8E93').margin({bottom:8})
-                  Text(this.maintenanceDueText).fontSize(26).fontColor('#1C1C1E').fontWeight(FontWeight.Bold)
-               }.alignItems(HorizontalAlign.Start).layoutWeight(1)
-            }.width('100%')
+          Text('维护建议')
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontColor('#1C1C1E')
+            .margin({ bottom: 24 })
 
-            Text(this.maintenanceAdvice).fontSize(14).fontColor('#8E8E93').lineHeight(20).margin({top: 18})
-        }.width('100%').padding(24).backgroundColor('#FFFFFF').borderRadius(24).alignItems(HorizontalAlign.Start)
-          .shadow({ radius: 15, color: 'rgba(0,0,0,0.03)', offsetY: 6 })
+          Row() {
+            Column() {
+              Text('估算可用周期')
+                .fontSize(13)
+                .fontColor('#8E8E93')
+                .margin({ bottom: 8 })
+              Text(this.remainingLifeDays > 0 ? `${this.remainingLifeDays} 天` : '评估中')
+                .fontSize(26)
+                .fontColor('#1C1C1E')
+                .fontWeight(FontWeight.Bold)
+            }.alignItems(HorizontalAlign.Start).layoutWeight(1)
 
-        // 快捷控制指令
+            Column() {
+              Text('建议处理窗口')
+                .fontSize(13)
+                .fontColor('#8E8E93')
+                .margin({ bottom: 8 })
+              Text(this.maintenanceDueText)
+                .fontSize(26)
+                .fontColor('#1C1C1E')
+                .fontWeight(FontWeight.Bold)
+            }.alignItems(HorizontalAlign.Start).layoutWeight(1)
+          }.width('100%')
+
+          Text(this.maintenanceAdvice)
+            .fontSize(14)
+            .fontColor('#8E8E93')
+            .lineHeight(20)
+            .margin({ top: 18 })
+        }
+        .width('100%')
+        .padding(24)
+        .backgroundColor('#FFFFFF')
+        .borderRadius(24)
+        .alignItems(HorizontalAlign.Start)
+        .shadow({ radius: 15, color: 'rgba(0,0,0,0.03)', offsetY: 6 })
+
         Column() {
-           Text("设备快捷干预终端").fontSize(18).fontWeight(FontWeight.Bold).fontColor('#1C1C1E').margin({bottom: 24})
-           
-           Row({space: 12}) {
-             Button("平滑降力运作")
-               .layoutWeight(1)
-               .height(50)
-               .backgroundColor('#FFF5E5')
-               .fontColor('#FF9500')
-               .fontWeight(FontWeight.Medium)
-               .borderRadius(16)
-               .onClick(() => { deviceService.submitLogAction("指令透传：机组转入降力阻断模式持续30m"); })
-             
-             Button("物理急停控制")
-               .layoutWeight(1)
-               .height(50)
-               .backgroundColor('#FFEBEA')
-               .fontColor('#FF3B30')
-               .fontWeight(FontWeight.Medium)
-               .borderRadius(16)
-               .onClick(() => { deviceService.submitLogAction("🚨 全局红牌告警：客户端已触发红色紧急按钮物理关停！"); })
-           }.width('100%').margin({bottom: 12})
-           
-           Button("提交维护工单至后端组")
-              .width('100%')
+          Text('后端记录操作')
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontColor('#1C1C1E')
+            .margin({ bottom: 12 })
+          Text('以下按钮只向后端审计日志写入建议，不代表已经完成物理降载、急停或 ERP 工单流转。')
+            .fontSize(13)
+            .fontColor('#8E8E93')
+            .lineHeight(18)
+            .margin({ bottom: 20 })
+
+          Row({ space: 12 }) {
+            Button('记录降载建议')
+              .layoutWeight(1)
               .height(50)
-              .backgroundColor('#E8F2FF')
-              .fontColor('#007AFF')
+              .backgroundColor('#FFF5E5')
+              .fontColor('#FF9500')
               .fontWeight(FontWeight.Medium)
               .borderRadius(16)
-              .onClick(() => { deviceService.submitLogAction("ERP协测：维保急报已经推送至云端审批管道"); })
-        }.width('100%').padding(24).backgroundColor('#FFFFFF').borderRadius(24).alignItems(HorizontalAlign.Start)
-         .shadow({ radius: 15, color: 'rgba(0,0,0,0.03)', offsetY: 6 })
+              .onClick(() => {
+                deviceService.submitLogAction(`维护建议记录：建议对当前设备进行降载观察，模型标签=${this.classLabel}`);
+              })
 
-      }.width('100%').padding(20)
+            Button('记录高风险提醒')
+              .layoutWeight(1)
+              .height(50)
+              .backgroundColor('#FFEBEA')
+              .fontColor('#FF3B30')
+              .fontWeight(FontWeight.Medium)
+              .borderRadius(16)
+              .onClick(() => {
+                deviceService.submitLogAction(`高风险提醒记录：当前告警=${this.alertLabel}，活跃告警数=${this.activeAlerts}`);
+              })
+          }.width('100%').margin({ bottom: 12 })
+
+          Button('记录维护建议摘要')
+            .width('100%')
+            .height(50)
+            .backgroundColor('#E8F2FF')
+            .fontColor('#007AFF')
+            .fontWeight(FontWeight.Medium)
+            .borderRadius(16)
+            .onClick(() => {
+              deviceService.submitLogAction(`维护建议摘要：${this.maintenanceAdvice}；推理=${this.currentInferenceMs.toFixed(1)}ms，平均FPS=${this.averageFps.toFixed(1)}`);
+            })
+        }
+        .width('100%')
+        .padding(24)
+        .backgroundColor('#FFFFFF')
+        .borderRadius(24)
+        .alignItems(HorizontalAlign.Start)
+        .shadow({ radius: 15, color: 'rgba(0,0,0,0.03)', offsetY: 6 })
+      }
+      .width('100%')
+      .padding(20)
     }
   }
 }
