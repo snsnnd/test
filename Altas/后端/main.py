@@ -6,7 +6,7 @@ from atlas_runtime import atlas_runtime
 
 app = FastAPI(title="Ascend IIoT Central Hub", version="2.2", description="企业级边缘通信管理后端核心总线接口 API（Atlas 本地推理结果驱动，支持多设备扩展）")
 
-# 无脑容忍全局跨域调校 (为了方便不同厂牌面板调试抓包连接)
+# 调试阶段允许跨域，便于 DAYU200、浏览器面板或局域网设备联调。
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -47,9 +47,9 @@ async def select_device(req: SelectDeviceRequest):
     success = atlas_runtime.select_device(req.device_id)
     if success:
         return {"success": True, "active_device_id": atlas_runtime.active_device_id}
-    return {"success": False, "message": "设备 ID 超出范围"}
+    return {"success": False, "message": "设备 ID 超出范围或目标切换未被网关确认"}
 
-@app.get("/api/telemetry/{device_id}", response_model=DeviceTelemetry, summary="深度探测遥传")
+@app.get("/api/telemetry/{device_id}", response_model=DeviceTelemetry, summary="设备遥测与模型推理结果")
 async def get_telemetry(device_id: int):
     d = next((x for x in atlas_runtime.device_list if x.id == device_id), atlas_runtime.active_device)
     return DeviceTelemetry(
@@ -83,12 +83,13 @@ async def get_telemetry(device_id: int):
         averageFps=atlas_runtime.performance["averageFps"],
     )
 
-@app.get("/api/cluster", response_model=ClusterStatus, summary="集控通信状况日志")
+@app.get("/api/cluster", response_model=ClusterStatus, summary="集控通信状况与日志")
 async def get_cluster_status():
-    """抛出服务器本身运转心跳、握手延时参数与共享日志池。"""
+    """返回后端日志、连接节点数、告警数量与推理性能，不再返回无真实来源的节点温度字段。"""
     return ClusterStatus(
-        logs=list(atlas_runtime.logs), nearlinkLatency=atlas_runtime.nearlinkLatency,
-        edgeTemp=atlas_runtime.edgeTemp, scanPosition=atlas_runtime.scanPosition,
+        logs=list(atlas_runtime.logs),
+        nearlinkLatency=atlas_runtime.nearlinkLatency,
+        scanPosition=atlas_runtime.scanPosition,
         connectedSources=len(atlas_runtime.device_list),
         activeAlerts=len([d for d in atlas_runtime.device_list if d.alertLevel in ("warning", "critical")]),
         currentPreprocessMs=atlas_runtime.performance["currentPreprocessMs"],
@@ -101,13 +102,13 @@ async def get_cluster_status():
         averageFps=atlas_runtime.performance["averageFps"],
     )
 
-@app.post("/api/action/log", summary="透明化审计事件透传")
+@app.post("/api/action/log", summary="追加前端审计事件")
 async def submit_log_action(req: LogActionRequest):
     atlas_runtime.add_log(req.message)
     return {"success": True}
 
-@app.post("/api/action/expert", summary="覆盖安全接管门槛")
+@app.post("/api/action/expert", summary="更新前端调参参数")
 async def update_expert_settings(req: ExpertSettingsRequest):
     atlas_runtime.aiSensitivity = req.aiSensitivity
-    atlas_runtime.add_log("防卫模型极重度：已由云端强令进入阻断级防火墙" if req.aggressiveMode else "柔性云端智控恢复：撤回强制保护并恢复自检阈值")
+    atlas_runtime.add_log("前端调参：启用高敏告警观察模式" if req.aggressiveMode else "前端调参：恢复标准告警观察模式")
     return {"success": True}
