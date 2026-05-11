@@ -55,7 +55,6 @@ export interface DeviceTelemetry {
 export interface ClusterStatus {
    logs: string[];
    nearlinkLatency: number;
-   edgeTemp: number;
    scanPosition: number;
    connectedSources?: number;
    activeAlerts?: number;
