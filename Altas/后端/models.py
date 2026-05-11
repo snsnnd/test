@@ -51,7 +51,6 @@ class DeviceTelemetry(BaseModel):
 class ClusterStatus(BaseModel):
     logs: List[str]
     nearlinkLatency: float
-    edgeTemp: float
     scanPosition: int
     connectedSources: int
     activeAlerts: int
