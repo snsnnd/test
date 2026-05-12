@@ -106,17 +106,35 @@ class AtlasRuntimeService:
     def _compose_name_id(target_name: str) -> int:
         return 100000 + (zlib.crc32(target_name.encode("utf-8")) & 0x7FFF)
 
+    # def _send_select_target(self, target_name: str) -> bool:
+    #     payload = json.dumps({"action": "select_target", "target_name": target_name}, ensure_ascii=False) + "\n"
+    #     try:
+    #         with socket.create_connection((ATLAS_CONTROL_HOST, ATLAS_CONTROL_PORT), timeout=3) as sock:
+    #             sock.sendall(payload.encode("utf-8"))
+    #         self.add_log(f"已向网关下发切换目标指令: {target_name}")
+    #         return True
+    #     except OSError as exc:
+    #         self.add_log(f"下发切换目标指令失败: {exc}")
+    #         return False
+
     def _send_select_target(self, target_name: str) -> bool:
         payload = json.dumps({"action": "select_target", "target_name": target_name}, ensure_ascii=False) + "\n"
+
+        self.add_log(f"准备向 Atlas 下发选择目标: {target_name}")
+
         try:
             with socket.create_connection((ATLAS_CONTROL_HOST, ATLAS_CONTROL_PORT), timeout=3) as sock:
                 sock.sendall(payload.encode("utf-8"))
-            self.add_log(f"已向网关下发切换目标指令: {target_name}")
+
+            self.add_log(
+                f"已向 Atlas 控制端口下发目标: {target_name} "
+                f"addr={ATLAS_CONTROL_HOST}:{ATLAS_CONTROL_PORT}"
+            )
             return True
         except OSError as exc:
             self.add_log(f"下发切换目标指令失败: {exc}")
             return False
-
+    
     def select_device(self, device_id: int) -> bool:
         with self.lock:
             if device_id in self.devices:
@@ -234,8 +252,14 @@ class AtlasRuntimeService:
                 if device.targetName and device_id not in seen_ids and device.source_id == 0:
                     device.available = False
 
+            # self.logs.appendleft(
+            #     f"[Atlas Backend] 发现 {len(nodes)} 个 JS 节点，当前目标={active_target or '未选择'} 连接={'是' if target_connected else '否'}"
+            # )
             self.logs.appendleft(
-                f"[Atlas Backend] 发现 {len(nodes)} 个 JS 节点，当前目标={active_target or '未选择'} 连接={'是' if target_connected else '否'}"
+                f"[Atlas Backend] bridge_status: nodes={len(nodes)} "
+                f"active_target={active_target or '未选择'} "
+                f"connected={'是' if target_connected else '否'} "
+                f"names={[node.get('name') for node in nodes]}"
             )
 
     def _handle_bridge_ack(self, payload: dict):
