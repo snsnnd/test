@@ -10,12 +10,12 @@ from dataclasses import dataclass
 import acl
 import numpy as np
 
-from atlas_ai.master_control import (
+from master_control import (
     BridgeControlParser,
     LocalControlServer,
     build_select_target_frame,
 )
-from atlas_ai.perf_metrics import PerfTracker
+from perf_metrics import PerfTracker
 
 
 MODEL_PACKET_MAGIC = 0x4A53
@@ -608,13 +608,37 @@ class AtlasInferenceGateway:
         self.control_server = LocalControlServer(self._handle_local_select_target)
         self.perf_tracker = PerfTracker(window_size=120)
 
+    # def _handle_local_select_target(self, target_name):
+    #     if (self.ingress_mode != "serial") or (self.serial_device is None) or (not target_name):
+    #         return
+    #     frame = build_select_target_frame(target_name)
+    #     with self.serial_lock:
+    #         self.serial_device.write(frame)
+    #         self.serial_device.flush()
     def _handle_local_select_target(self, target_name):
-        if (self.ingress_mode != "serial") or (self.serial_device is None) or (not target_name):
+        print(f"[Atlas] 收到后端选择目标请求 target={target_name!r}")
+
+        if not target_name:
+            print("[Atlas] SELECT_TARGET 忽略：target_name 为空")
             return
+
+        if self.ingress_mode != "serial":
+            print(f"[Atlas] SELECT_TARGET 忽略：当前 ingress_mode={self.ingress_mode}")
+            return
+
+        if self.serial_device is None:
+            print("[Atlas] SELECT_TARGET 忽略：串口尚未连接")
+            return
+
         frame = build_select_target_frame(target_name)
         with self.serial_lock:
             self.serial_device.write(frame)
             self.serial_device.flush()
+
+        print(
+            f"[Atlas] 已向 Master 下发 SELECT_TARGET target={target_name} "
+            f"frame_len={len(frame)} head={frame[:16].hex(' ')}"
+        )
 
     @staticmethod
     def _softmax(values):
@@ -722,12 +746,39 @@ class AtlasInferenceGateway:
             print(f"[Atlas] 推理失败 frame={frame['frame_id']} err={exc}")
             self.publisher.broadcast(error_payload)
 
+    # def _consume_payload(self, parser, reassembler, payload):
+    #     for packet in parser.feed(payload):
+    #         frame = reassembler.add_packet(packet)
+    #         if frame is None:
+    #             continue
+    #         self._handle_completed_frame(frame)
+    #     reassembler.purge_stale()
+
     def _consume_payload(self, parser, reassembler, payload):
-        for packet in parser.feed(payload):
+        packets = parser.feed(payload)
+
+        if packets:
+            print(f"[Atlas] 本次解析到模型包数量: {len(packets)}")
+
+        for packet in packets:
+            print(
+                f"[Atlas] MODEL_PACKET "
+                f"type={packet['type']} "
+                f"frame={packet['frame_id']} "
+                f"chunk={packet['chunk_index'] + 1}/{packet['chunk_total']} "
+                f"payload={len(packet['payload'])}"
+            )
+
             frame = reassembler.add_packet(packet)
             if frame is None:
                 continue
+
+            print(
+                f"[Atlas] 模型帧重组完成 frame={frame['frame_id']}，"
+                f"准备推理"
+            )
             self._handle_completed_frame(frame)
+
         reassembler.purge_stale()
 
     def _handle_ingress_client(self, client_socket, client_addr):
