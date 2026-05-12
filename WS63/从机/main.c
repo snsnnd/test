@@ -5,20 +5,16 @@
 #include "cmsis_os2.h"
 #include "app_init.h"
 
-// 引入我们自己写的模块
 #include "sensor_node_config.h"
 #include "sensor_module.h"
 #include "sle_module.h"
 
-// 定义星闪设备名称
 #define MY_SLE_DEV_NAME JS_SENSOR_DEVICE_NAME
 #define MODEL_PACKET_MAGIC 0x4A53
 #define MODEL_PACKET_VERSION 1
 #define MODEL_PAYLOAD_MAX_BYTES 128
 #define MODEL_SEND_RETRY_COUNT 3
-
-static volatile bool g_reporting_enabled = true;
-static uint16_t g_model_frame_id = 0;
+#define MODEL_FRAME_SEND_INTERVAL_MS 1000
 
 typedef enum {
     MODEL_PACKET_TYPE_META = 1,
@@ -62,6 +58,9 @@ typedef struct __attribute__((packed)) {
     int16_t last_gyro_z;
 } ModelFrameMeta_t;
 
+static volatile bool g_reporting_enabled = true;
+static uint16_t g_model_frame_id = 0;
+
 static bool Command_Equals(const uint8_t *data, uint16_t len, const char *command)
 {
     size_t command_len;
@@ -92,6 +91,11 @@ static int JS_SendPacket(ModelPacketType_t type,
         .payload_len = payload_len,
     };
 
+    if (payload_len > MODEL_PAYLOAD_MAX_BYTES) {
+        printf("[JS App] payload_len too large type=%u len=%u\r\n", (unsigned int)type, payload_len);
+        return -1;
+    }
+
     (void)memcpy(packet, &header, sizeof(header));
     if ((payload != NULL) && (payload_len > 0)) {
         (void)memcpy(&packet[sizeof(header)], payload, payload_len);
@@ -104,6 +108,12 @@ static int JS_SendPacket(ModelPacketType_t type,
         osDelay(1);
     }
 
+    printf("[JS App] packet send failed type=%u frame=%u chunk=%u/%u len=%u\r\n",
+        (unsigned int)type,
+        frame_id,
+        chunk_index,
+        chunk_total,
+        payload_len);
     return -1;
 }
 
@@ -116,6 +126,12 @@ static int JS_SendChunkedBuffer(ModelPacketType_t type, uint16_t frame_id, const
     }
 
     chunk_total = (uint16_t)((total_len + MODEL_PAYLOAD_MAX_BYTES - 1) / MODEL_PAYLOAD_MAX_BYTES);
+    printf("[JS App] start send type=%u frame=%u chunks=%u total_len=%lu\r\n",
+        (unsigned int)type,
+        frame_id,
+        chunk_total,
+        (unsigned long)total_len);
+
     for (uint16_t chunk_index = 0; chunk_index < chunk_total; chunk_index++) {
         uint32_t offset = (uint32_t)chunk_index * MODEL_PAYLOAD_MAX_BYTES;
         uint32_t remaining = total_len - offset;
@@ -147,15 +163,24 @@ static int JS_SendModelFrame(uint16_t frame_id)
     meta.imu_ready = frame_info.imu_ready;
     meta.mic_ready = frame_info.mic_ready;
     meta.temperature_ready = frame_info.temperature_ready;
-    meta.audio_format = 1;      // PCM16 mono, little-endian
-    meta.vibration_layout = 1;  // channel-major [3][2000]
-    meta.temperature_format = 1; // int16, 0.1C
+    meta.audio_format = 1;
+    meta.vibration_layout = 1;
+    meta.temperature_format = 1;
     meta.last_accel_x = frame_info.last_accel_x;
     meta.last_accel_y = frame_info.last_accel_y;
     meta.last_accel_z = frame_info.last_accel_z;
     meta.last_gyro_x = frame_info.last_gyro_x;
     meta.last_gyro_y = frame_info.last_gyro_y;
     meta.last_gyro_z = frame_info.last_gyro_z;
+
+    printf("[JS App] send model frame=%u audio=%lu vib=%u temp=%u imu=%u mic=%u temp_ready=%u\r\n",
+        frame_id,
+        (unsigned long)meta.audio_valid_samples,
+        meta.vib_valid_samples,
+        meta.temp_valid_samples,
+        meta.imu_ready,
+        meta.mic_ready,
+        meta.temperature_ready);
 
     if (JS_SendPacket(MODEL_PACKET_TYPE_META, frame_id, 0, 1, (const uint8_t *)&meta, sizeof(meta)) != 0) {
         return -1;
@@ -185,82 +210,77 @@ static int JS_SendModelFrame(uint16_t frame_id)
     return JS_SendPacket(MODEL_PACKET_TYPE_END, frame_id, 0, 1, NULL, 0);
 }
 
-// 当收到主设备（DAYU200）发来的指令时，触发此函数
-static void On_SLE_Data_Received(uint8_t *data, uint16_t len) {
-    printf("[Main] 收到主设备指令! 长度:%u, 内容:%.*s\r\n", len, (int)len, (const char *)data);
+static void On_SLE_Data_Received(uint8_t *data, uint16_t len)
+{
+    printf("[Main] receive master command len:%u payload:%.*s\r\n", len, (int)len, (const char *)data);
 
     if (Command_Equals(data, len, "STOP")) {
         g_reporting_enabled = false;
-        printf("[Main] 已暂停传感器数据上报\r\n");
+        printf("[Main] reporting stopped\r\n");
         return;
     }
 
     if (Command_Equals(data, len, "START")) {
         g_reporting_enabled = true;
-        printf("[Main] 已恢复传感器数据上报\r\n");
+        printf("[Main] reporting started\r\n");
         return;
     }
 
     if (Command_Equals(data, len, "STATUS")) {
-        printf("[Main] 当前上报状态: %s\r\n", g_reporting_enabled ? "RUNNING" : "STOPPED");
+        printf("[Main] reporting status: %s\r\n", g_reporting_enabled ? "RUNNING" : "STOPPED");
     }
 }
 
-// 主业务线程
-static void JS_MainTask(void *arg) {
+static void JS_MainTask(void *arg)
+{
     (void)arg;
-    
+
     printf("\r\n=======================================\r\n");
-    printf("[JS App] 工业异常检测终端启动...\r\n");
+    printf("[JS App] Industrial anomaly terminal start\r\n");
     printf("=======================================\r\n");
 
-    // 1. 初始化传感器
     Sensor_Init();
-
-    // 2. 初始化星闪并注册回调
     SLE_Server_Init();
     SLE_Register_Receive_Callback(On_SLE_Data_Received);
-
-    // 3. 开始广播，等待主设备连接
     SLE_Start_Advertising(MY_SLE_DEV_NAME);
 
-    // 4. 进入核心工作循环
     while (1) {
         if (!g_reporting_enabled) {
-            osDelay(10);
+            osDelay(100);
             continue;
         }
 
         if (!SLE_IsConnected()) {
-            osDelay(10);
+            osDelay(100);
             continue;
         }
 
         if (Sensor_CaptureModelFrame() != ERRCODE_SUCC) {
-            osDelay(10);
+            printf("[JS App] capture model frame failed\r\n");
+            osDelay(500);
             continue;
         }
 
         if (JS_SendModelFrame(g_model_frame_id) == 0) {
-            printf("[JS App] 模型帧发送完成 frame_id=%u\r\n", g_model_frame_id);
+            printf("[JS App] model frame send complete frame_id=%u\r\n", g_model_frame_id);
             g_model_frame_id++;
         } else {
-            printf("[JS App] 模型帧发送失败 frame_id=%u\r\n", g_model_frame_id);
+            printf("[JS App] model frame send failed frame_id=%u\r\n", g_model_frame_id);
         }
 
-        osDelay(10);
+        osDelay(MODEL_FRAME_SEND_INTERVAL_MS);
     }
 }
 
-// 线程注册
-static void JS_App_Entry(void) {
+static void JS_App_Entry(void)
+{
     osThreadAttr_t attr = {0};
     attr.name = "JS_MainTask";
-    attr.stack_size = 1024 * 8; // SLE 通信可能需要大一点的栈空间，给 8KB
+    attr.stack_size = 1024 * 8;
     attr.priority = osPriorityNormal;
 
     if (osThreadNew(JS_MainTask, NULL, &attr) == NULL) {
-        printf("[JS App] 线程创建失败!\r\n");
+        printf("[JS App] thread create failed\r\n");
     }
 }
 
