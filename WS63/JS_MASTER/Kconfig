@@ -1,5 +1,0 @@
-config ENABLE_JS_MASTER_APP
-    bool "Enable JS Master Application"
-    default n
-    help
-      Build the WS63 SLE client/master demo used to connect to the JS slave node.
