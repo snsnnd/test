@@ -8,6 +8,7 @@
 #include "sensor_node_config.h"
 #include "sensor_module.h"
 #include "sle_module.h"
+#include "systick.h"
 
 #define MY_SLE_DEV_NAME JS_SENSOR_DEVICE_NAME
 #define MODEL_PACKET_MAGIC 0x4A53
@@ -117,7 +118,7 @@ static int JS_SendPacket(ModelPacketType_t type,
     return -1;
 }
 
-static int JS_SendChunkedBuffer(ModelPacketType_t type, uint16_t frame_id, const uint8_t *buffer, uint32_t total_len)
+static int JS_SendChunkedBuffer(ModelPacketType_t type, uint16_t frame_id, const uint8_t *buffer, uint32_t total_len, uint32_t *fail_count)
 {
     uint16_t chunk_total;
 
@@ -138,6 +139,7 @@ static int JS_SendChunkedBuffer(ModelPacketType_t type, uint16_t frame_id, const
         uint16_t chunk_len = (remaining > MODEL_PAYLOAD_MAX_BYTES) ? MODEL_PAYLOAD_MAX_BYTES : (uint16_t)remaining;
 
         if (JS_SendPacket(type, frame_id, chunk_index, chunk_total, &buffer[offset], chunk_len) != 0) {
+            if (fail_count != NULL) { (*fail_count)++; }
             return -1;
         }
     }
@@ -149,6 +151,9 @@ static int JS_SendModelFrame(uint16_t frame_id)
 {
     SensorModelFrameInfo_t frame_info = { 0 };
     ModelFrameMeta_t meta = { 0 };
+    uint32_t send_start_us = (uint32_t)uapi_systick_get_us();
+    uint32_t send_end_us;
+    uint32_t send_fail_count = 0;
 
     Sensor_GetModelFrameInfo(&frame_info);
 
@@ -183,31 +188,47 @@ static int JS_SendModelFrame(uint16_t frame_id)
         meta.temperature_ready);
 
     if (JS_SendPacket(MODEL_PACKET_TYPE_META, frame_id, 0, 1, (const uint8_t *)&meta, sizeof(meta)) != 0) {
+        send_fail_count++;
         return -1;
     }
 
     if (JS_SendChunkedBuffer(MODEL_PACKET_TYPE_AUDIO,
         frame_id,
         (const uint8_t *)Sensor_GetModelAudioWindow(),
-        SENSOR_MODEL_AUDIO_SAMPLES * sizeof(int16_t)) != 0) {
+        SENSOR_MODEL_AUDIO_SAMPLES * sizeof(int16_t), &send_fail_count) != 0) {
         return -1;
     }
 
     if (JS_SendChunkedBuffer(MODEL_PACKET_TYPE_VIBRATION,
         frame_id,
         (const uint8_t *)Sensor_GetModelVibrationWindow(),
-        SENSOR_MODEL_VIB_CHANNELS * SENSOR_MODEL_VIB_SAMPLES * sizeof(int16_t)) != 0) {
+        SENSOR_MODEL_VIB_CHANNELS * SENSOR_MODEL_VIB_SAMPLES * sizeof(int16_t), &send_fail_count) != 0) {
         return -1;
     }
 
     if (JS_SendChunkedBuffer(MODEL_PACKET_TYPE_TEMPERATURE,
         frame_id,
         (const uint8_t *)Sensor_GetModelTemperatureWindow(),
-        SENSOR_MODEL_TEMP_SAMPLES * sizeof(int16_t)) != 0) {
+        SENSOR_MODEL_TEMP_SAMPLES * sizeof(int16_t), &send_fail_count) != 0) {
         return -1;
     }
 
-    return JS_SendPacket(MODEL_PACKET_TYPE_END, frame_id, 0, 1, NULL, 0);
+    if (JS_SendPacket(MODEL_PACKET_TYPE_END, frame_id, 0, 1, NULL, 0) != 0) {
+        send_fail_count++;
+        return -1;
+    }
+
+    send_end_us = (uint32_t)uapi_systick_get_us();
+    printf("[JS PERF] frame=%u capture_ts=%lu send_cost_us=%lu fail=%lu audio=%lu vib=%u temp=%u\r\n",
+        frame_id,
+        (unsigned long)meta.capture_timestamp_us,
+        (unsigned long)(send_end_us - send_start_us),
+        (unsigned long)send_fail_count,
+        (unsigned long)meta.audio_valid_samples,
+        meta.vib_valid_samples,
+        meta.temp_valid_samples);
+
+    return 0;
 }
 
 static void On_SLE_Data_Received(uint8_t *data, uint16_t len)

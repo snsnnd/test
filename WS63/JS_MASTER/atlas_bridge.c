@@ -78,6 +78,9 @@ static osMessageQueueId_t g_bridge_queue = NULL;
 static uint8_t g_bridge_uart_rx_buffer[BRIDGE_UART_RX_BUFFER_SIZE] = { 0 };
 static osMutexId_t g_bridge_uart_mutex = NULL;
 static uint32_t g_bridge_queue_full_count = 0;
+static uint32_t g_bridge_enqueue_count = 0;
+static uint32_t g_bridge_uart_forward_count = 0;
+static uint32_t g_bridge_uart_fail_count = 0;
 
 static void Atlas_Bridge_Uart_Reset(void);
 static errcode_t Atlas_Bridge_Ensure_Uart_Ready(void);
@@ -376,8 +379,11 @@ static void Atlas_Bridge_Worker(void *arg)
         }
 
         if (Atlas_Bridge_Write_Raw(packet.data, packet.len) != 0) {
-            printf("[Atlas Bridge] UART 转发失败，等待重连\r\n");
+            g_bridge_uart_fail_count++;
+            printf("[Atlas Bridge] UART 转发失败 fail=%lu，等待重连\r\n", (unsigned long)g_bridge_uart_fail_count);
             osDelay(BRIDGE_UART_RETRY_DELAY_MS);
+        } else {
+            g_bridge_uart_forward_count++;
         }
     }
 }
@@ -390,6 +396,12 @@ static void Atlas_Bridge_Status_Thread(void *arg)
         if (Atlas_Bridge_Ensure_Uart_Ready() == ERRCODE_SUCC) {
             Atlas_Bridge_Send_Discovery_Status();
         }
+        printf("[Atlas Bridge STAT] enqueue=%lu forward=%lu drop=%lu uart_fail=%lu ready=%u\r\n",
+            (unsigned long)g_bridge_enqueue_count,
+            (unsigned long)g_bridge_uart_forward_count,
+            (unsigned long)g_bridge_queue_full_count,
+            (unsigned long)g_bridge_uart_fail_count,
+            Atlas_Bridge_Is_Ready() ? 1 : 0);
         osDelay(BRIDGE_STATUS_REPORT_INTERVAL_MS);
     }
 }
@@ -473,6 +485,7 @@ bool Atlas_Bridge_Enqueue_Packet(const uint8_t *payload, uint16_t len)
     packet.len = len;
     (void)memcpy(packet.data, payload, len);
     if (osMessageQueuePut(g_bridge_queue, &packet, 0, BRIDGE_QUEUE_PUT_WAIT_MS) == osOK) {
+        g_bridge_enqueue_count++;
         return true;
     }
 
