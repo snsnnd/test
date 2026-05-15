@@ -1,4 +1,5 @@
 import argparse
+import csv
 import json
 import socket
 import struct
@@ -6,6 +7,8 @@ import threading
 import time
 import traceback
 from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 
 import acl
 import numpy as np
@@ -587,9 +590,111 @@ class ResultTcpPublisher:
             self.clients.clear()
 
 
+
+
+class ExperimentCsvLogger:
+    def __init__(self, run_name=None, logs_dir="logs"):
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.run_name = run_name or f"run_{stamp}"
+        self.logs_dir = Path(logs_dir)
+        self.logs_dir.mkdir(parents=True, exist_ok=True)
+        self.result_path = self.logs_dir / f"{self.run_name}_result.csv"
+        self.perf_path = self.logs_dir / f"{self.run_name}_perf.csv"
+        self._result_ready = False
+        self._perf_ready = False
+
+    def _ensure_result_header(self):
+        if self._result_ready and self.result_path.exists():
+            return
+        headers = [
+            "time","frame_id","source_id","device_id","experiment_mode","label",
+            "predicted_class","prob_0","prob_1","prob_2","health_score","alert_level",
+            "correct","false_alarm","temperature_avg_c","temperature_max_c","acc_x_g","acc_y_g","acc_z_g",
+        ]
+        with self.result_path.open("w", newline="", encoding="utf-8") as f:
+            csv.DictWriter(f, fieldnames=headers).writeheader()
+        self._result_ready = True
+
+    def _ensure_perf_header(self):
+        if self._perf_ready and self.perf_path.exists():
+            return
+        headers = [
+            "time","frame_id","source_id","device_id","preprocess_ms","inference_ms","total_ms",
+            "avg_preprocess_ms","avg_inference_ms","avg_total_ms","p95_preprocess_ms","p95_inference_ms","p95_total_ms",
+            "max_preprocess_ms","max_inference_ms","max_total_ms","fps","frame_count",
+        ]
+        with self.perf_path.open("w", newline="", encoding="utf-8") as f:
+            csv.DictWriter(f, fieldnames=headers).writeheader()
+        self._perf_ready = True
+
+    def write_result(self, result, experiment_mode, label):
+        self._ensure_result_header()
+        probs = result.get("class_probabilities", [0.0,0.0,0.0])
+        while len(probs) < 3:
+            probs.append(0.0)
+        predicted = result.get("predicted_class", -1)
+        correct = int(label >= 0 and predicted == label)
+        false_alarm = int(label == 0 and predicted != 0)
+        telemetry = result.get("telemetry", {})
+        row = {
+            "time": datetime.now().isoformat(),
+            "frame_id": result.get("frame_id"),
+            "source_id": result.get("source_id"),
+            "device_id": result.get("device_id"),
+            "experiment_mode": experiment_mode,
+            "label": label,
+            "predicted_class": predicted,
+            "prob_0": round(float(probs[0]), 6),
+            "prob_1": round(float(probs[1]), 6),
+            "prob_2": round(float(probs[2]), 6),
+            "health_score": result.get("health_score"),
+            "alert_level": result.get("alert_level", 0),
+            "correct": correct,
+            "false_alarm": false_alarm,
+            "temperature_avg_c": telemetry.get("temperature_avg_c"),
+            "temperature_max_c": telemetry.get("temperature_max_c"),
+            "acc_x_g": (telemetry.get("last_accel_g") or [None,None,None])[0],
+            "acc_y_g": (telemetry.get("last_accel_g") or [None,None,None])[1],
+            "acc_z_g": (telemetry.get("last_accel_g") or [None,None,None])[2],
+        }
+        with self.result_path.open("a", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=row.keys())
+            writer.writerow(row)
+
+    def write_perf(self, result):
+        self._ensure_perf_header()
+        perf = result.get("performance", {})
+        avg = perf.get("average", {})
+        p95 = perf.get("p95", {})
+        maxv = perf.get("max", {})
+        row = {
+            "time": datetime.now().isoformat(),
+            "frame_id": result.get("frame_id"),
+            "source_id": result.get("source_id"),
+            "device_id": result.get("device_id"),
+            "preprocess_ms": round(float(result.get("preprocess_latency_ms", 0.0)), 3),
+            "inference_ms": round(float(result.get("inference_latency_ms", 0.0)), 3),
+            "total_ms": round(float(result.get("total_latency_ms", 0.0)), 3),
+            "avg_preprocess_ms": avg.get("preprocessMs", 0.0),
+            "avg_inference_ms": avg.get("inferenceMs", 0.0),
+            "avg_total_ms": avg.get("totalMs", 0.0),
+            "p95_preprocess_ms": p95.get("preprocessMs", 0.0),
+            "p95_inference_ms": p95.get("inferenceMs", 0.0),
+            "p95_total_ms": p95.get("totalMs", 0.0),
+            "max_preprocess_ms": maxv.get("preprocessMs", 0.0),
+            "max_inference_ms": maxv.get("inferenceMs", 0.0),
+            "max_total_ms": maxv.get("totalMs", 0.0),
+            "fps": avg.get("fps", 0.0),
+            "frame_count": perf.get("frameCount", 0),
+        }
+        with self.perf_path.open("a", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=row.keys())
+            writer.writerow(row)
+
 class AtlasInferenceGateway:
     def __init__(self, model_path, ingress_host, ingress_port, result_host, result_port,
-                 device_id=0, ingress_mode="serial", serial_port="/dev/ttyUSB0", serial_baudrate=115200):
+                 device_id=0, ingress_mode="serial", serial_port="/dev/ttyUSB0", serial_baudrate=115200,
+                 experiment_mode="full", experiment_label=-1, run_name=None):
         self.model = Net(model_path, device_id=device_id)
         self.audio_preprocessor = AudioModelPreprocessor()
         self.vibration_preprocessor = VibrationModelPreprocessor()
@@ -607,6 +712,9 @@ class AtlasInferenceGateway:
         self.serial_device = None
         self.control_server = LocalControlServer(self._handle_local_select_target)
         self.perf_tracker = PerfTracker(window_size=120)
+        self.experiment_mode = experiment_mode
+        self.experiment_label = experiment_label
+        self.exp_logger = ExperimentCsvLogger(run_name=run_name)
 
     # def _handle_local_select_target(self, target_name):
     #     if (self.ingress_mode != "serial") or (self.serial_device is None) or (not target_name):
@@ -687,6 +795,17 @@ class AtlasInferenceGateway:
             "temperature_max_c": round(float(np.max(frame["temperature"])) / 10.0, 2),
         }
 
+
+    def _apply_experiment_mask(self, audio_input, vibration_input, temp_input):
+        mode = self.experiment_mode
+        if mode == "no_audio":
+            audio_input = np.zeros_like(audio_input)
+        elif mode == "no_vibration":
+            vibration_input = np.zeros_like(vibration_input)
+        elif mode == "no_temperature":
+            temp_input = np.zeros_like(temp_input)
+        return audio_input, vibration_input, temp_input
+
     def _run_inference(self, frame):
         meta = frame["meta"]
         frame_start = self.perf_tracker.start()
@@ -694,6 +813,7 @@ class AtlasInferenceGateway:
         audio_input = self.audio_preprocessor.process(frame["audio_pcm"], meta.audio_valid_samples)
         vibration_input = self.vibration_preprocessor.process(frame["vibration"], meta.vib_valid_samples)
         temp_input = self.temperature_preprocessor.process(frame["temperature"], meta.temp_valid_samples)
+        audio_input, vibration_input, temp_input = self._apply_experiment_mask(audio_input, vibration_input, temp_input)
         preprocess_latency_ms = (time.time() - preprocess_start) * 1000.0
 
         start_time = time.time()
@@ -729,6 +849,8 @@ class AtlasInferenceGateway:
     def _handle_completed_frame(self, frame):
         try:
             result = self._run_inference(frame)
+            self.exp_logger.write_result(result, experiment_mode=self.experiment_mode, label=self.experiment_label)
+            self.exp_logger.write_perf(result)
             print(
                 f"[Atlas] source={result.get('source_id')} device={result.get('device_id')} "
                 f"frame={result['frame_id']} class={result['predicted_class']} "
@@ -909,6 +1031,9 @@ def build_arg_parser():
     serve_parser.add_argument("--serial-baudrate", type=int, default=115200)
     serve_parser.add_argument("--result-host", default="0.0.0.0")
     serve_parser.add_argument("--result-port", type=int, default=19001)
+    serve_parser.add_argument("--experiment-mode", default="full", choices=["full", "no_audio", "no_vibration", "no_temperature"])
+    serve_parser.add_argument("--label", type=int, default=-1)
+    serve_parser.add_argument("--run-name", default=None)
 
     client_parser = subparsers.add_parser("demo-client", help="启动 DUYU200 结果接收示例")
     client_parser.add_argument("--host", default="127.0.0.1")
@@ -931,6 +1056,9 @@ def main():
             ingress_mode=args.ingress_mode,
             serial_port=args.serial_port,
             serial_baudrate=args.serial_baudrate,
+            experiment_mode=args.experiment_mode,
+            experiment_label=args.label,
+            run_name=args.run_name,
         )
         gateway.serve_forever()
         return
